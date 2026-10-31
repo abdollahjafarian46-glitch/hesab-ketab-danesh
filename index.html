@@ -135,10 +135,35 @@ body{background:var(--bg);padding:0 16px 150px}
   .bar nav { max-width: 1060px; }
   #v-ledger, #v-items, #v-list, #v-debt, #v-prof { max-width: 1060px; margin-left:auto; margin-right:auto; }
 }
+
+#authGate{position:fixed;inset:0;z-index:1000;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:22px}
+#authGate .authbox{width:100%;max-width:420px;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:24px;box-shadow:0 18px 50px rgba(0,0,0,.12)}
+#authGate h2{font-size:22px;margin:0 0 8px;color:var(--ink)}
+#authGate p{font-size:13px;line-height:1.9;color:var(--mute);margin:0 0 14px}
+#authGate .authbtn{width:100%;border:0;border-radius:14px;padding:13px;margin-top:10px;background:#176B40;color:#fff;font:inherit;font-weight:700}
+#authGate .authsecondary{background:var(--line);color:var(--ink)}
+#authMsg{font-size:12px!important;min-height:22px;margin-top:10px!important}
+#cloudBadge{font-size:10px;color:#fff;opacity:.9;display:block}
+#logoutBtn{border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff;border-radius:10px;padding:5px 8px;font:inherit;font-size:11px}
+
 </style>
 </head>
 <body>
-<div class="top"><button class="hm" id="cfgBtn" aria-label="تنظیمات"><svg viewBox="0 0 24 24" width="30" height="30" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M3 7h18M3 12h18M3 17h18"/></svg></button><div class="tt"><h1 id="ttl">دفتر مشتریان</h1><small id="today"></small></div><span class="hm"></span></div>
+
+<div id="authGate">
+ <div class="authbox">
+  <div style="font-size:34px;margin-bottom:8px">📚</div>
+  <h2>حسابداری دانش</h2>
+  <p>برای نگهداری امن اطلاعات و همگام‌سازی بین آیفون و کامپیوتر، با ایمیل و رمز عبور وارد شو.</p>
+  <input class="fld" id="authEmail" type="email" autocomplete="username" placeholder="ایمیل">
+  <input class="fld" id="authPassword" type="password" autocomplete="current-password" placeholder="رمز عبور (حداقل ۶ کاراکتر)">
+  <button class="authbtn" id="authLogin">ورود به حساب</button>
+  <button class="authbtn authsecondary" id="authSignup">ساخت حساب جدید</button>
+  <p id="authMsg" aria-live="polite"></p>
+ </div>
+</div>
+
+<div class="top"><button class="hm" id="cfgBtn" aria-label="تنظیمات"><svg viewBox="0 0 24 24" width="30" height="30" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M3 7h18M3 12h18M3 17h18"/></svg></button><div class="tt"><h1 id="ttl">دفتر مشتریان</h1><small id="today"></small><small id="cloudBadge">اتصال ابری</small><button id="logoutBtn" type="button">خروج</button></div><span class="hm"></span></div>
 
 <section id="v-ledger" class="hide">
   <div class="seg" id="lgSeg" style="margin:0 0 12px"><button class="on" data-lg="c">مشتریان</button><button data-lg="s">تأمین‌کنندگان</button></div>
@@ -261,11 +286,75 @@ body{background:var(--bg);padding:0 16px 150px}
   <button class="save" id="save">ذخیره</button>
 </div></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script>
+const SUPABASE_URL = "https://otiesuslpaudsyljtffa.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Xxmy8iyL-q23_2oO1aONNA_LZExzmQ9";
+const cloudClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let cloudReady = false, cloudTimer = null, cloudBusy = false;
+const cloudKeys = ["hesab","hesab_cfg","hesab_items"];
+function authMessage(t){document.getElementById("authMsg").textContent=t;}
+function setCloudStatus(t){const e=document.getElementById("cloudBadge");if(e)e.textContent=t;}
+function localPayload(){const o={};cloudKeys.forEach(k=>{try{o[k]=JSON.parse(localStorage.getItem(k) || (k==="hesab"||k==="hesab_items"?"[]":"{}"));}catch(e){o[k]=k==="hesab"||k==="hesab_items"?[]:{}}});return o;}
+function applyPayload(o){if(!o)return;cloudKeys.forEach(k=>{if(Object.prototype.hasOwnProperty.call(o,k))localStorage.setItem(k,JSON.stringify(o[k]));});}
+async function cloudPush(){
+ if(!cloudReady||cloudBusy)return;
+ const {data:{user}}=await cloudClient.auth.getUser();if(!user)return;
+ cloudBusy=true;setCloudStatus("در حال همگام‌سازی…");
+ try{const {error}=await cloudClient.from("danesh_cloud_data").upsert({owner_id:user.id,payload:localPayload(),updated_at:new Date().toISOString()},{onConflict:"owner_id"});if(error)throw error;setCloudStatus("☁️ ذخیره ابری شد");}
+ catch(e){console.error(e);setCloudStatus("خطا در ذخیره ابری");}
+ finally{cloudBusy=false;}
+}
+function scheduleCloudPush(){if(!cloudReady)return;clearTimeout(cloudTimer);cloudTimer=setTimeout(cloudPush,900);}
+async function startCloudSession(){
+ const {data:{session},error}=await cloudClient.auth.getSession();if(error)throw error;
+ if(!session){document.getElementById("authGate").style.display="flex";return;}
+ await loadCloudForUser();
+}
+async function loadCloudForUser(){
+ setCloudStatus("در حال دریافت اطلاعات…");
+ const {data:{user}}=await cloudClient.auth.getUser();if(!user)return;
+ const {data,error}=await cloudClient.from("danesh_cloud_data").select("payload").eq("owner_id",user.id).maybeSingle();
+ if(error)throw error;
+ if(data&&data.payload){applyPayload(data.payload);setCloudStatus("☁️ همگام‌سازی فعال");}
+ else{setCloudStatus("ساخت نسخه ابری…");}
+ cloudReady=true;
+ document.getElementById("authGate").style.display="none";
+ if(!data)await cloudPush();
+ if(typeof render==="function")render();
+}
+document.getElementById("authLogin").addEventListener("click",async()=>{
+ const email=document.getElementById("authEmail").value.trim(),password=document.getElementById("authPassword").value;
+ if(!email||!password){authMessage("ایمیل و رمز عبور را وارد کن.");return;}
+ authMessage("در حال ورود…");
+ const {error}=await cloudClient.auth.signInWithPassword({email,password});
+ if(error){authMessage("ورود انجام نشد: "+error.message);return;}
+ try{await loadCloudForUser();}catch(e){authMessage("خطا در دریافت اطلاعات ابری: "+e.message);}
+});
+document.getElementById("authSignup").addEventListener("click",async()=>{
+ const email=document.getElementById("authEmail").value.trim(),password=document.getElementById("authPassword").value;
+ if(!email||!password){authMessage("ایمیل و رمز عبور را وارد کن.");return;}
+ if(password.length<6){authMessage("رمز عبور باید حداقل ۶ کاراکتر باشد.");return;}
+ authMessage("در حال ساخت حساب…");
+ const {data,error}=await cloudClient.auth.signUp({email,password});
+ if(error){authMessage("ثبت‌نام انجام نشد: "+error.message);return;}
+ if(data.session){try{await loadCloudForUser();}catch(e){authMessage("حساب ساخته شد، اما دریافت اطلاعات با خطا روبه‌رو شد.");}}
+ else{authMessage("حساب ساخته شد. ایمیلت را تأیید کن، سپس با ایمیل و رمز وارد شو.");}
+});
+document.getElementById("logoutBtn").addEventListener("click",async()=>{
+ if(!confirm("از حساب خارج شوی؟"))return;
+ cloudReady=false;await cloudClient.auth.signOut();document.getElementById("authGate").style.display="flex";setCloudStatus("خارج‌شده");
+});
+cloudClient.auth.onAuthStateChange(async(event,session)=>{
+ if(event==="SIGNED_IN"&&session&&!cloudReady){try{await loadCloudForUser();}catch(e){console.error(e);authMessage("خطای اتصال ابری: "+e.message);}}
+ if(event==="SIGNED_OUT"){cloudReady=false;}
+});
+
 var TYPES={sale:["فروش","🛒","pos"],expense:["هزینه","💸","neg"],receivable:["طلب از مشتری","📥","pos"],purchase:["فاکتور خرید","📤","neg"]};
 var db=[],type="sale",flt="all";
 try{db=JSON.parse(localStorage.getItem("hesab")||"[]")}catch(e){db=[]}
-function persist(){try{localStorage.setItem("hesab",JSON.stringify(db))}catch(e){}}
+function persist(){try{localStorage.setItem("hesab",JSON.stringify(db))}catch(e){}scheduleCloudPush()}
 var fa=function(n){return Math.round(n).toLocaleString("fa-IR")};
 var $=function(i){return document.getElementById(i)};
 function digits(s){return s.replace(/[۰-۹]/g,function(d){return "۰۱۲۳۴۵۶۷۸۹".indexOf(d)}).replace(/[٠-٩]/g,function(d){return "٠١٢٣٤٥٦٧٨٩".indexOf(d)}).replace(/[^\d]/g,"")}
@@ -329,7 +418,7 @@ $("invbg").onclick=function(e){if(e.target==$("invbg"))$("invbg").classList.remo
 $("sms").addEventListener("click",function(){try{navigator.clipboard.writeText(invText(cur))}catch(e){}});
 $("cpy").onclick=function(){var b=this;try{navigator.clipboard.writeText(invText(cur));b.textContent="✅ کپی شد"}catch(e){b.textContent="کپی نشد"}setTimeout(function(){b.textContent="📋 کپی"},1500)};
 function load(k,d){try{var v=JSON.parse(localStorage.getItem(k));return v||d}catch(e){return d}}
-function store(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+function store(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}scheduleCloudPush()}
 var CFG=load("hesab_cfg",{name:"نوشت‌افزار دانش",sub:"پرینت - کپی - طراحی و چاپ لیبل - نوشت‌افزار",addr:"صحرای باغ - دشتی",tel:"۰۹۱۹۳۱۰۰۰۲۴",next:1001});
 CFG.cards=CFG.cards||["6277601449034774","6219861972180698"];
 function cardFmt(n){return digits(n).replace(/(\d{4})(?=\d)/g,"$1 ")}
@@ -617,6 +706,7 @@ document.addEventListener("click",function(e){var t=e.target,r=t.closest&&t.clos
   if(t.dataset.pdel){var id=t.dataset.pdel;ask("این فاکتور خرید حذف شود؟ اگر کالاهایش به انبار اضافه شده، از موجودی کم می‌شود.",function(){restock(id);db=db.filter(function(x){return x.id!=id});persist();render()})}
   if(t.dataset.pyd){var a=t.dataset.pyd.split(",");ask("این پرداخت حذف شود؟",function(){db.forEach(function(x){if(x.id==a[0])x.paid=(x.paid||[]).filter(function(p){return p.id!=a[1]})});persist();render()},"حذف")}});
 render();
+startCloudSession().catch(e=>{console.error(e);authMessage("خطا در اتصال به سرویس حسابداری: "+e.message);});
 </script>
 <script>
 (function(){
